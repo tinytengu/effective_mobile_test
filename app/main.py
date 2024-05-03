@@ -1,6 +1,7 @@
 import os
-from datetime import datetime, timezone
 import argparse
+from datetime import datetime, timezone
+from contextlib import contextmanager
 
 import colorama  # type: ignore
 from colorama import Fore, Back, Style
@@ -16,21 +17,31 @@ DB_FILENAME: str | None = None
 TEXT_CHOOSE = Back.LIGHTBLUE_EX + "\n[Выберите действие]" + Style.RESET_ALL
 
 
-def view(func):
-    def wrapper(*args, **kwargs):
-        global DB_FILENAME
+@contextmanager
+def get_db():
+    """Database context manager. Provides an instance of JsonFileDatabase to a view functions."""
+    global DB_FILENAME
 
+    db = JsonFileDatabase()
+    db.connect(filename=DB_FILENAME)
+
+    try:
+        yield db
+    finally:
+        db.disconnect()
+
+
+def view(func):
+    """Simple wrapper for view functions.
+
+    It resets terminal styles and clears the terminal before calling the decorated function.
+    """
+
+    def wrapper(*args, **kwargs):
         print(Style.RESET_ALL)
         term_clear()
 
-        db = JsonFileDatabase()
-        db.connect(filename=DB_FILENAME)
-
-        kwargs["database"] = db
-        result = func(*args, **kwargs)
-
-        db.disconnect()
-        return result
+        return func(*args, **kwargs)
 
     return wrapper
 
@@ -51,13 +62,17 @@ def main():
             print("Файл {} не найден".format(args.filename))
             exit()
 
+    print("SET DB_FILENAME")
     DB_FILENAME = args.filename
 
     home_view()
 
 
 @view
-def home_view(database: JsonFileDatabase, *args, **kwargs):
+def home_view() -> None:
+    """
+    Displays the main menu for the application.
+    """
     print(TEXT_CHOOSE)
     print("1. Посмотреть баланс")
     print("2. Посмотреть транзакции")
@@ -78,8 +93,13 @@ def home_view(database: JsonFileDatabase, *args, **kwargs):
 
 
 @view
-def balance_view(database: JsonFileDatabase, *args, **kwargs):
-    balance = calculate_expenses(database.get_transactions())
+def balance_view():
+    """
+    Displays user balance view.
+    """
+    with get_db() as database:
+        balance = calculate_expenses(database.get_transactions())
+
     print(
         "Ваш баланс: {}{:.02f} руб.".format(
             (Fore.GREEN if balance >= 0 else Fore.RED), balance
@@ -90,12 +110,16 @@ def balance_view(database: JsonFileDatabase, *args, **kwargs):
 
 
 @view
-def transactions_view(database: JsonFileDatabase, *args, **kwargs):
-    transactions = sorted(
-        database.get_transactions(),
-        key=lambda transaction: transaction.date,
-        reverse=True,
-    )
+def transactions_view():
+    """
+    Displays user transactions view.
+    """
+    with get_db() as database:
+        transactions = sorted(
+            database.get_transactions(),
+            key=lambda transaction: transaction.date,
+            reverse=True,
+        )
     expenses_amount = calculate_expenses(transactions)
 
     print(
@@ -149,7 +173,13 @@ def transactions_view(database: JsonFileDatabase, *args, **kwargs):
 
 
 @view
-def transaction_detail_view(database: JsonFileDatabase, transaction: Transaction):
+def transaction_detail_view(transaction: Transaction):
+    """
+    Displays detailed information about a specific transaction.
+
+    Parameters:
+        - transaction (Transaction): The specific transaction object whose details are to be displayed.
+    """
     print(
         Back.LIGHTBLUE_EX
         + "[Транзакция #{}]".format(str(transaction.id))
@@ -176,8 +206,9 @@ def transaction_detail_view(database: JsonFileDatabase, transaction: Transaction
     elif choice == "3":
         transaction_edit_description_view(transaction=transaction)
     elif choice == "4":
-        database.delete_transaction(transaction.id)
-        database.save()
+        with get_db() as database:
+            database.delete_transaction(transaction.id)
+            database.save()
         transactions_view()
     elif choice == "<":
         transactions_view()
@@ -188,7 +219,13 @@ def transaction_detail_view(database: JsonFileDatabase, transaction: Transaction
 
 
 @view
-def transaction_edit_date_view(database: JsonFileDatabase, transaction: Transaction):
+def transaction_edit_date_view(transaction: Transaction):
+    """
+    Displays transaction date edit view.
+
+    Parameters:
+        - transaction (Transaction): The specific transaction object whose details are to be displayed.
+    """
     print(
         Back.LIGHTBLUE_EX
         + "[Транзакция #{}]".format(str(transaction.id))
@@ -209,14 +246,26 @@ def transaction_edit_date_view(database: JsonFileDatabase, transaction: Transact
             transaction_edit_date_view(transaction=transaction)
             return
 
-    database.change_transaction(transaction.id, transaction.clone(date=expense_date))
-    database.save()
+    with get_db() as database:
+        database.change_transaction(
+            transaction.id, transaction.clone(date=expense_date)
+        )
+        database.save()
+        transaction = database.get_transaction(transaction.id)
 
-    transaction_detail_view(transaction=database.get_transaction(transaction.id))
+    transaction_detail_view(transaction=transaction)
 
 
 @view
-def transaction_edit_amount_view(database: JsonFileDatabase, transaction: Transaction):
+def transaction_edit_amount_view(
+    transaction: Transaction,
+):
+    """
+    Displays transaction amount edit view.
+
+    Parameters:
+        - transaction (Transaction): The specific transaction object whose details are to be displayed.
+    """
     print(
         Back.LIGHTBLUE_EX
         + "[Транзакция #{}]".format(str(transaction.id))
@@ -231,18 +280,26 @@ def transaction_edit_amount_view(database: JsonFileDatabase, transaction: Transa
     if expense_amount == 0:
         return transaction_edit_amount_view(transaction=transaction)
 
-    database.change_transaction(
-        transaction.id, transaction.clone(amount=expense_amount)
-    )
-    database.save()
+    with get_db() as database:
+        database.change_transaction(
+            transaction.id, transaction.clone(amount=expense_amount)
+        )
+        database.save()
+        transaction = database.get_transaction(transaction.id)
 
-    transaction_detail_view(transaction=database.get_transaction(transaction.id))
+    transaction_detail_view(transaction=transaction)
 
 
 @view
 def transaction_edit_description_view(
     database: JsonFileDatabase, transaction: Transaction
 ):
+    """
+    Displays transaction description edit view.
+
+    Parameters:
+        - transaction (Transaction): The specific transaction object whose details are to be displayed.
+    """
     print(
         Back.LIGHTBLUE_EX
         + "[Транзакция #{}]".format(str(transaction.id))
@@ -251,16 +308,21 @@ def transaction_edit_description_view(
 
     expense_description = input("Введите описание: ")
 
-    database.change_transaction(
-        transaction.id, transaction.clone(description=expense_description)
-    )
-    database.save()
+    with get_db() as database:
+        database.change_transaction(
+            transaction.id, transaction.clone(description=expense_description)
+        )
+        database.save()
+        transaction = database.get_transaction(transaction.id)
 
-    transaction_detail_view(transaction=database.get_transaction(transaction.id))
+    transaction_detail_view(transaction=transaction)
 
 
 @view
-def transaction_add_view(database: JsonFileDatabase, *args, **kwargs):
+def transaction_add_view():
+    """
+    Displays transaction add view.
+    """
     print("[Добавление транзакции]")
 
     expense_amount = 0
@@ -313,12 +375,21 @@ def transaction_add_view(database: JsonFileDatabase, *args, **kwargs):
 
 @view
 def add_transaction_check_view(
-    database: JsonFileDatabase,
     expense_type: TransactionType,
     expense_amount: float,
     expense_description: str,
     expense_date: datetime,
+    database=get_db,
 ):
+    """
+    Displays transaction add view confirmation.
+
+    Parameters:
+        - expense_type (TransactionType)
+        - expense_amount (float)
+        - expense_description (str)
+        - expense_date (datetime)
+    """
     print(
         "Тип: {}".format(
             (Fore.GREEN if expense_type == TransactionType.INCOME else Fore.RED)
@@ -332,9 +403,10 @@ def add_transaction_check_view(
 
     answer = input("Создать? (y/n) ")
     if answer == "y":
-        database.add_transaction(
-            Transaction.create(expense_type, expense_amount, expense_description)
-        )
-        database.save()
+        with get_db() as database:
+            database.add_transaction(
+                Transaction.create(expense_type, expense_amount, expense_description)
+            )
+            database.save()
 
     transactions_view()
