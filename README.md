@@ -7,6 +7,15 @@
 * Усложнение жизни: `mypy`
 * Тестирование: `pytest`
 
+<details>
+  <summary>СКРИНШОТЫ</summary>
+  <img src="/demo/1.png?raw=true" alt="Screen 1"/>
+  <img src="/demo/2.png?raw=true" alt="Screen 2"/>
+  <img src="/demo/3.png?raw=true" alt="Screen 3"/>
+  <img src="/demo/4.png?raw=true" alt="Screen 4"/>
+  <img src="/demo/5.png?raw=true" alt="Screen 5"/>
+</details>
+
 # Использование приложения
 ```
 usage: main.py [-h] -f FILENAME [--create]
